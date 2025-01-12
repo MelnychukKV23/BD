@@ -1,9 +1,50 @@
 import psycopg2
 import psycopg2.extras
 from time import time
+from sqlalchemy import create_engine, Column, Integer, String, DECIMAL, Date, ForeignKey
+from sqlalchemy.orm import declarative_base, sessionmaker, relationship
+
+Base = declarative_base()
+
+# Define ORM Models
+class Client(Base):
+    __tablename__ = 'clients'
+
+    clientid = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(100), nullable=False)
+    email = Column(String(100), nullable=False, unique=True)
+    phone = Column(String(15))
+    orders = relationship('Order', back_populates='client', cascade='all, delete-orphan')
+
+
+class Tour(Base):
+    __tablename__ = 'tours'
+
+    tourid = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(100), nullable=False)
+    country = Column(String(100), nullable=False)
+    price = Column(DECIMAL(10, 2), nullable=False)
+    orders = relationship('Order', back_populates='tour', cascade='all, delete-orphan')
+
+
+class Order(Base):
+    __tablename__ = 'orders'
+
+    orderid = Column(Integer, primary_key=True, autoincrement=True)
+    clientid = Column(Integer, ForeignKey('clients.clientid', ondelete='CASCADE'), nullable=False)
+    tourid = Column(Integer, ForeignKey('tours.tourid', ondelete='CASCADE'), nullable=False)
+    orderdate = Column(Date, nullable=False)
+    status = Column(String(50), nullable=False)
+    peoplecount = Column(Integer, nullable=False)
+    discount = Column(DECIMAL(5, 2))
+
+    client = relationship('Client', back_populates='orders')
+    tour = relationship('Tour', back_populates='orders')
+
 
 class Model:
     def __init__(self):
+        # psycopg2 connection
         self.conn = psycopg2.connect(
             dbname='tourist-agency-portal',
             user='postgres',
@@ -11,108 +52,135 @@ class Model:
             host='localhost',
             port=5432
         )
+
+        # SQLAlchemy engine and session
+        self.engine = create_engine('postgresql+psycopg2://postgres:1234@localhost:5432/tourist-agency-portal')
+        Base.metadata.create_all(self.engine)
+        self.Session = sessionmaker(bind=self.engine)
+
         self.create_tables()
 
     def create_tables(self):
         with self.conn.cursor() as c:
             c.execute('''
-                CREATE TABLE IF NOT EXISTS Clients (
-                    ClientID SERIAL PRIMARY KEY,
-                    Name VARCHAR(100) NOT NULL,
-                    Email VARCHAR(100) NOT NULL UNIQUE,
-                    Phone VARCHAR(15)
+                CREATE TABLE IF NOT EXISTS clients (
+                    clientid SERIAL PRIMARY KEY,
+                    name VARCHAR(100) NOT NULL,
+                    email VARCHAR(100) NOT NULL UNIQUE,
+                    phone VARCHAR(15)
                 );
-                CREATE TABLE IF NOT EXISTS Tours (
-                    TourID SERIAL PRIMARY KEY,
-                    Name VARCHAR(100) NOT NULL,
-                    Country VARCHAR(100) NOT NULL,
-                    Price DECIMAL(10, 2) NOT NULL
+                CREATE TABLE IF NOT EXISTS tours (
+                    tourid SERIAL PRIMARY KEY,
+                    name VARCHAR(100) NOT NULL,
+                    country VARCHAR(100) NOT NULL,
+                    price DECIMAL(10, 2) NOT NULL
                 );
-                CREATE TABLE IF NOT EXISTS Orders (
-                    OrderID SERIAL PRIMARY KEY,
-                    ClientID INT NOT NULL,
-                    TourID INT NOT NULL,
-                    OrderDate DATE NOT NULL,
-                    Status VARCHAR(50) NOT NULL,
-                    PeopleCount INT NOT NULL,
-                    Discount DECIMAL(5, 2),
-                    FOREIGN KEY (ClientID) REFERENCES Clients(ClientID) ON DELETE CASCADE,
-                    FOREIGN KEY (TourID) REFERENCES Tours(TourID) ON DELETE CASCADE
+                CREATE TABLE IF NOT EXISTS orders (
+                    orderid SERIAL PRIMARY KEY,
+                    clientid INT NOT NULL,
+                    tourid INT NOT NULL,
+                    orderdate DATE NOT NULL,
+                    status VARCHAR(50) NOT NULL,
+                    peoplecount INT NOT NULL,
+                    discount DECIMAL(5, 2),
+                    FOREIGN KEY (clientid) REFERENCES clients(clientid) ON DELETE CASCADE,
+                    FOREIGN KEY (tourid) REFERENCES tours(tourid) ON DELETE CASCADE
                 );
             ''')
             self.conn.commit()
 
     def add_client(self, name, email, phone):
+        session = self.Session()
         try:
-            with self.conn.cursor() as c:
-                c.execute('INSERT INTO Clients (Name, Email, Phone) VALUES (%s, %s, %s)', (name, email, phone))
-                self.conn.commit()
-        except psycopg2.Error as e:
+            client = Client(name=name, email=email, phone=phone)
+            session.add(client)
+            session.commit()
+        except Exception as e:
             print(f"Error adding client: {e}")
-            self.conn.rollback()
+            session.rollback()
+        finally:
+            session.close()
 
     def get_all_clients(self):
-        with self.conn.cursor() as c:
-            c.execute('SELECT * FROM Clients')
-            return c.fetchall()
+        session = self.Session()
+        try:
+            return [(client.clientid, client.name, client.email, client.phone) for client in session.query(Client).all()]
+        finally:
+            session.close()
 
     def update_client(self, client_id, name, email, phone):
+        session = self.Session()
         try:
-            with self.conn.cursor() as c:
-                c.execute(
-                    'UPDATE Clients SET Name=%s, Email=%s, Phone=%s WHERE ClientID=%s',
-                    (name, email, phone, client_id)
-                )
-                self.conn.commit()
-        except psycopg2.Error as e:
+            client = session.query(Client).filter_by(clientid=client_id).first()
+            if client:
+                client.name = name
+                client.email = email
+                client.phone = phone
+                session.commit()
+        except Exception as e:
             print(f"Error updating client: {e}")
-            self.conn.rollback()
+            session.rollback()
+        finally:
+            session.close()
 
     def delete_client(self, client_id):
+        session = self.Session()
         try:
-            with self.conn.cursor() as c:
-                c.execute('DELETE FROM Clients WHERE ClientID=%s', (client_id,))
-                self.conn.commit()
-        except psycopg2.Error as e:
+            client = session.query(Client).filter_by(clientid=client_id).first()
+            if client:
+                session.delete(client)
+                session.commit()
+        except Exception as e:
             print(f"Error deleting client: {e}")
-            self.conn.rollback()
+            session.rollback()
+        finally:
+            session.close()
 
     def add_tour(self, name, country, price):
+        session = self.Session()
         try:
-            with self.conn.cursor() as c:
-                c.execute('INSERT INTO Tours (Name, Country, Price) VALUES (%s, %s, %s)', (name, country, price))
-                self.conn.commit()
-        except psycopg2.Error as e:
+            tour = Tour(name=name, country=country, price=price)
+            session.add(tour)
+            session.commit()
+        except Exception as e:
             print(f"Error adding tour: {e}")
-            self.conn.rollback()
+            session.rollback()
+        finally:
+            session.close()
 
     def get_all_tours(self):
-        with self.conn.cursor() as c:
-            c.execute('SELECT * FROM Tours')
-            return c.fetchall()
+        session = self.Session()
+        try:
+            return [(tour.tourid, tour.name, tour.country, tour.price) for tour in session.query(Tour).all()]
+        finally:
+            session.close()
 
     def create_order(self, client_id, tour_id, order_date, status, people_count, discount):
+        session = self.Session()
         try:
-            with self.conn.cursor() as c:
-                c.execute('''
-                    INSERT INTO Orders (ClientID, TourID, OrderDate, Status, PeopleCount, Discount)
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                ''', (client_id, tour_id, order_date, status, people_count, discount))
-                self.conn.commit()
-        except psycopg2.Error as e:
+            order = Order(
+                clientid=client_id,
+                tourid=tour_id,
+                orderdate=order_date,
+                status=status,
+                peoplecount=people_count,
+                discount=discount
+            )
+            session.add(order)
+            session.commit()
+        except Exception as e:
             print(f"Error creating order: {e}")
-            self.conn.rollback()
+            session.rollback()
+        finally:
+            session.close()
 
     def get_all_orders(self):
-        with self.conn.cursor() as c:
-            c.execute('''
-                SELECT Orders.OrderID, Clients.Name, Tours.Name, Orders.OrderDate, Orders.Status,
-                       Orders.PeopleCount, Orders.Discount
-                FROM Orders
-                JOIN Clients ON Orders.ClientID = Clients.ClientID
-                JOIN Tours ON Orders.TourID = Tours.TourID
-            ''')
-            return c.fetchall()
+        session = self.Session()
+        try:
+            return [(order.orderid, order.client.name, order.tour.name, order.orderdate, order.status,
+                     order.peoplecount, order.discount) for order in session.query(Order).all()]
+        finally:
+            session.close()
     
     def generate_random_data(self):
         with self.conn.cursor() as c:
